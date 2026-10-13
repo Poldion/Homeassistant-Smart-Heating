@@ -151,10 +151,9 @@ blueprint:
         presence_entities:
           name: Personen / Tracker
           description: >-
-            Personen, Device-Tracker oder Gruppen. Sind **alle** nicht zu Hause,
-            wird auf die Abwesenheitstemperatur geregelt. Leer lassen, um die
-            Anwesenheit zu ignorieren. (Zustände „home“ bzw. „on“ gelten als zu
-            Hause.)
+            Personen, Device-Tracker oder Gruppen. Ist **keine** davon in einer
+            der Zuhause-Zonen, wird auf die Abwesenheitstemperatur geregelt.
+            Leer lassen, um die Anwesenheit zu ignorieren.
           default: []
           selector:
             entity:
@@ -166,11 +165,26 @@ blueprint:
                     - group
                     - binary_sensor
                     - input_boolean
+        presence_zones:
+          name: Zuhause-Zonen
+          description: >-
+            Solange eine Person in einer dieser Zonen ist, gilt sie als zu Hause.
+            Wähle z. B. eine größere Zone „Umgebung“ (Radius 2–3 km), damit
+            kurzes Einkaufen nicht das ganze Haus absenkt. Geprüft wird per GPS-
+            Abstand zum Zonenmittelpunkt; verschachtelte Zonen (z. B. „Supermarkt“
+            innerhalb von „Umgebung“) zählen dadurch mit. Der Zustand „home“ gilt
+            immer als zu Hause (z. B. für reine WLAN-Tracker).
+          default:
+            - zone.home
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: zone
         away_delay_minutes:
           name: Abwesenheits-Verzögerung
           description: >-
-            So lange muss niemand zu Hause sein, bevor abgesenkt wird
-            (verhindert Absenken beim kurzen Müll-Rausbringen o. Ä.).
+            So lange muss niemand in den Zuhause-Zonen sein, bevor abgesenkt wird.
           default: 10
           selector:
             number:
@@ -299,6 +313,10 @@ blueprint:
                 - auto
                 - heat_cool
 
+trigger_variables:
+  presence_entities: !input presence_entities
+  presence_zones: !input presence_zones
+
 mode: queued
 max: 20
 max_exceeded: silent
@@ -307,7 +325,6 @@ variables:
   climate_entities: !input climate_entities
   motion_sensors: !input motion_sensors
   door_sensors: !input door_sensors
-  presence_entities: !input presence_entities
   bed_sensors: !input bed_sensors
   enable_entities: !input enable_entities
   comfort_temp: !input comfort_temperature
@@ -321,12 +338,10 @@ variables:
   bed_window_end: !input bed_window_end
   motion_hold_minutes: !input motion_hold_minutes
   door_open_minutes: !input door_open_minutes
-  away_delay_minutes: !input away_delay_minutes
   bed_on_minutes: !input bed_on_minutes
   bed_off_minutes: !input bed_off_minutes
   motion_hold_s: "{{ (motion_hold_minutes | float(0)) * 60 }}"
   door_open_s: "{{ (door_open_minutes | float(0)) * 60 }}"
-  away_delay_s: "{{ (away_delay_minutes | float(0)) * 60 }}"
   bed_on_s: "{{ (bed_on_minutes | float(0)) * 60 }}"
   bed_off_s: "{{ (bed_off_minutes | float(0)) * 60 }}"
 
@@ -353,18 +368,52 @@ triggers:
     entity_id: !input door_sensors
     to: "off"
     id: door_closed
-  # Anwesenheit
-  - trigger: state
-    entity_id: !input presence_entities
-    to:
-      - home
-      - "on"
+  # Anwesenheit (Template, damit auch GPS-Positionen ohne Zustandswechsel zählen)
+  - trigger: template
+    value_template: >-
+      {%- set ns = namespace(n=0, inside=false) -%}
+      {%- for p in expand(presence_entities) -%}
+        {%- set ns.n = ns.n + 1 -%}
+        {%- if p.state in ['home', 'on', 'unknown', 'unavailable'] -%}
+          {%- set ns.inside = true -%}
+        {%- endif -%}
+        {%- for z in presence_zones if state_attr(z, 'latitude') is number -%}
+          {%- if p.state | lower == (state_attr(z, 'friendly_name') or '') | lower -%}
+            {%- set ns.inside = true -%}
+          {%- elif p.attributes.latitude is number -%}
+            {%- set dy = (p.attributes.latitude - state_attr(z, 'latitude')) * 111195 -%}
+            {%- set dx = (p.attributes.longitude - state_attr(z, 'longitude')) * 111195
+                         * cos(state_attr(z, 'latitude') * pi / 180) -%}
+            {%- if sqrt(dx * dx + dy * dy) <= state_attr(z, 'radius') | float(0) -%}
+              {%- set ns.inside = true -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.n > 0 and ns.inside }}
     id: presence_home
-  - trigger: state
-    entity_id: !input presence_entities
-    not_to:
-      - home
-      - "on"
+  - trigger: template
+    value_template: >-
+      {%- set ns = namespace(n=0, inside=false) -%}
+      {%- for p in expand(presence_entities) -%}
+        {%- set ns.n = ns.n + 1 -%}
+        {%- if p.state in ['home', 'on', 'unknown', 'unavailable'] -%}
+          {%- set ns.inside = true -%}
+        {%- endif -%}
+        {%- for z in presence_zones if state_attr(z, 'latitude') is number -%}
+          {%- if p.state | lower == (state_attr(z, 'friendly_name') or '') | lower -%}
+            {%- set ns.inside = true -%}
+          {%- elif p.attributes.latitude is number -%}
+            {%- set dy = (p.attributes.latitude - state_attr(z, 'latitude')) * 111195 -%}
+            {%- set dx = (p.attributes.longitude - state_attr(z, 'longitude')) * 111195
+                         * cos(state_attr(z, 'latitude') * pi / 180) -%}
+            {%- if sqrt(dx * dx + dy * dy) <= state_attr(z, 'radius') | float(0) -%}
+              {%- set ns.inside = true -%}
+            {%- endif -%}
+          {%- endif -%}
+        {%- endfor -%}
+      {%- endfor -%}
+      {{ ns.n > 0 and not ns.inside }}
     for:
       minutes: !input away_delay_minutes
     id: presence_away
@@ -429,16 +478,42 @@ actions:
           {%- endif -%}
         {%- endfor -%}
         {{ ns.v }}
-      nobody_home: >-
-        {%- set people = expand(presence_entities) -%}
-        {%- set ns = namespace(away=true) -%}
-        {%- for s in people -%}
-          {%- if s.state in ['home', 'on', 'unknown', 'unavailable']
-                or (now() - s.last_changed).total_seconds() < away_delay_s - 2 -%}
-            {%- set ns.away = false -%}
+      nobody_inside: >-
+        {%- set ns = namespace(n=0, inside=false) -%}
+        {%- for p in expand(presence_entities) -%}
+          {%- set ns.n = ns.n + 1 -%}
+          {%- if p.state in ['home', 'on', 'unknown', 'unavailable'] -%}
+            {%- set ns.inside = true -%}
+          {%- endif -%}
+          {%- for z in presence_zones if state_attr(z, 'latitude') is number -%}
+            {%- if p.state | lower == (state_attr(z, 'friendly_name') or '') | lower -%}
+              {%- set ns.inside = true -%}
+            {%- elif p.attributes.latitude is number -%}
+              {%- set dy = (p.attributes.latitude - state_attr(z, 'latitude')) * 111195 -%}
+              {%- set dx = (p.attributes.longitude - state_attr(z, 'longitude')) * 111195
+                           * cos(state_attr(z, 'latitude') * pi / 180) -%}
+              {%- if sqrt(dx * dx + dy * dy) <= state_attr(z, 'radius') | float(0) -%}
+                {%- set ns.inside = true -%}
+              {%- endif -%}
+            {%- endif -%}
+          {%- endfor -%}
+        {%- endfor -%}
+        {{ ns.n > 0 and not ns.inside }}
+      # Abwesenheit beginnt erst über den verzögerten Auslöser (bzw. beim Start)
+      # und bleibt danach bestehen, solange die Thermostate auf Abwesenheit stehen.
+      away_applied: >-
+        {%- set ns = namespace(v=true, n=0) -%}
+        {%- for e in climate_entities if states(e) not in ['unavailable', 'unknown'] -%}
+          {%- set ns.n = ns.n + 1 -%}
+          {%- if states(e) == 'off'
+                or ((state_attr(e, 'temperature') | float(-100)) - (away_temp | float)) | abs > 0.05 -%}
+            {%- set ns.v = false -%}
           {%- endif -%}
         {%- endfor -%}
-        {{ people | count > 0 and ns.away }}
+        {{ ns.v and ns.n > 0 }}
+      nobody_home: >-
+        {{ nobody_inside and (away_applied
+           or (trigger.id | default('')) in ['presence_away', 'ha_start', 'reloaded']) }}
       in_bed_window: >-
         {%- set n = now().strftime('%H:%M:%S') -%}
         {%- if bed_window_start == bed_window_end -%}

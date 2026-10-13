@@ -26,7 +26,7 @@ Die erste zutreffende Regel gewinnt:
 | Priorität | Bedingung | Ergebnis |
 |---|---|---|
 | 1 | Bett im Zeitfenster länger als *Einschlaf-Verzögerung* belegt | Heizung **aus** oder **Nachttemperatur** |
-| 2 | Alle Personen/Tracker länger als *Abwesenheits-Verzögerung* nicht zu Hause | **Abwesenheitstemperatur** |
+| 2 | Keine Person länger als *Abwesenheits-Verzögerung* in einer der *Zuhause-Zonen* | **Abwesenheitstemperatur** |
 | 3 | Eine Tür länger als *Tür-offen-Verzögerung* offen | **Absenktemperatur** |
 | 4 | Bewegung erkannt oder innerhalb der *Nachlaufzeit* | **Komforttemperatur** |
 | 5 | sonst | **Absenktemperatur** |
@@ -38,6 +38,14 @@ Weitere Details:
 - **Tür:** Kurzes Öffnen wird ignoriert. Erst nach der eingestellten Zeit
   wird abgesenkt. Ist die Tür wieder zu und es gibt Bewegung, geht es zurück
   auf Komfort.
+- **Zuhause-Zonen:** Du wählst, welche Zonen als „zu Hause“ zählen (Standard:
+  `zone.home`). Legst du z. B. eine Zone „Umgebung“ mit 2–3 km Radius an und
+  wählst sie aus, senkt kurzes Einkaufen nichts ab. Geprüft wird per GPS-Abstand
+  zum Zonenmittelpunkt. So zählen auch verschachtelte Zonen (z. B. „Supermarkt“
+  innerhalb von „Umgebung“), die Home Assistant selbst nicht mitzählt. Der Zustand
+  `home` gilt immer als zu Hause (z. B. für reine WLAN-Tracker ohne GPS).
+  Die Abwesenheits-Verzögerung zählt ab dem Verlassen der letzten Zone.
+  Kommt jemand zurück in eine Zone, wird sofort wieder normal geregelt.
 - **Bett-Zeitfenster:** Der Nachtmodus greift nur im eingestellten Zeitfenster
   (z. B. 21:00–09:00). Ein Mittagsschlaf schaltet also nichts ab. Beginn = Ende
   bedeutet „immer“. Bei Fensterbeginn bzw. -ende wird neu ausgewertet.

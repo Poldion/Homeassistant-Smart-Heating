@@ -31,6 +31,9 @@ async def env(hass, freezer):
         hass.states.async_set(e, "off")
     hass.states.async_set("person.a", "home"); hass.states.async_set("person.b", "home")
     hass.states.async_set("input_boolean.season", "on")
+    home = (52.5200, 13.4050)
+    hass.states.async_set("zone.home", "0", {"latitude": home[0], "longitude": home[1], "radius": 100, "friendly_name": "Home"})
+    hass.states.async_set("zone.umgebung", "0", {"latitude": home[0], "longitude": home[1], "radius": 3000, "friendly_name": "Umgebung"})
 
     async def setup(**extra):
         inp = {
@@ -86,7 +89,7 @@ async def test_presence(env):
     await st("binary_sensor.motion", "on"); assert cur() == 21
     await st("person.a", "not_home"); await tick(20); assert cur() == 21
     await st("person.b", "not_home"); await tick(5)
-    await st("person.b", "Arbeit"); await tick(9); assert cur() == 21
+    await st("person.b", "Arbeit"); await tick(4); assert cur() == 21  # delay counts from leaving
     await tick(1.5); assert cur() == 16
     await st("person.a", "home"); assert cur() == 21
 
@@ -132,3 +135,27 @@ async def test_minimal_inputs(env):
     hass, setup, tick, st, cur, calls, _ = env
     await setup(door_sensors=[], presence_entities=[], bed_sensors=[], enable_entities=[])
     await st("binary_sensor.motion", "on"); assert cur() == 21
+
+
+def km_north(km):
+    return {"latitude": 52.5200 + km / 111.195, "longitude": 13.4050, "gps_accuracy": 20}
+
+
+async def test_presence_zone_gps(env):
+    hass, setup, tick, st, cur, calls, _ = env
+    await setup(presence_entities=["person.a"], presence_zones=["zone.umgebung"])
+    await st("binary_sensor.motion", "on"); assert cur() == 21
+
+    async def gps(state, km):
+        hass.states.async_set("person.a", state, km_north(km)); await hass.async_block_till_done()
+
+    await gps("not_home", 1); await tick(20); assert cur() == 21       # shopping nearby
+    await gps("Supermarkt", 1.5); await tick(20); assert cur() == 21   # nested zone
+    await gps("not_home", 5); await tick(5)                            # left Umgebung (state unchanged)
+    await st("binary_sensor.motion", "off"); await st("binary_sensor.motion", "on")
+    assert cur() == 21                                                 # still within delay
+    await tick(5.5); assert cur() == 16                                # away after 10 min
+    await st("binary_sensor.motion", "off"); await st("binary_sensor.motion", "on")
+    assert cur() == 16                                                 # pet motion keeps away
+    await gps("not_home", 2); assert cur() == 21                       # back in Umgebung
+    await gps("home", 0); assert cur() == 21
