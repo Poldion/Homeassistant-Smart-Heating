@@ -1,0 +1,531 @@
+blueprint:
+  name: Smart Heating – Raumsteuerung
+  author: poldion
+  description: >-
+    Steuert die Heizung **eines Raums** anhand von Bewegung, Türstatus,
+    Anwesenheit und Bettsensor. Für jeden Raum wird eine eigene Automation
+    aus diesem Blueprint angelegt.
+
+
+    **Prioritäten (von oben nach unten, die erste zutreffende gewinnt):**
+
+    1. **Nachtmodus** – jemand liegt (im Zeitfenster) länger im Bett →
+       Heizung aus bzw. Nachttemperatur
+
+    2. **Abwesenheit** – niemand zu Hause → Abwesenheitstemperatur
+
+    3. **Tür zu lange offen** – Tür länger als die eingestellte Zeit offen →
+       Absenktemperatur
+
+    4. **Bewegung** – Bewegung erkannt (inkl. Nachlaufzeit) und Tür zu →
+       Komforttemperatur
+
+    5. **Sonst** → Absenktemperatur
+
+
+    Thermostate werden nur angesprochen, wenn sich der Sollwert wirklich
+    ändert (schont Batterien und Funknetz).
+  domain: automation
+  source_url: https://github.com/poldion/homeassistant-smart-heating/blob/main/blueprints/automation/smart_heating/room_heating.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    room_section:
+      name: Raum & Geräte
+      icon: mdi:home-thermometer
+      input:
+        climate_entities:
+          name: Thermostate
+          description: Die Heizkörperthermostate / Klima-Entitäten dieses Raums.
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: climate
+        motion_sensors:
+          name: Bewegungsmelder
+          description: >-
+            Bewegungs-/Präsenzmelder dieses Raums. Ist mindestens einer aktiv
+            (oder innerhalb der Nachlaufzeit), gilt der Raum als belegt.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                  device_class:
+                    - motion
+                    - occupancy
+                    - presence
+        door_sensors:
+          name: Tür-/Fenstersensoren
+          description: >-
+            Tür- (oder Fenster-)kontakte dieses Raums. Leer lassen, wenn der
+            Türstatus keine Rolle spielen soll.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain: binary_sensor
+                  device_class:
+                    - door
+                    - window
+                    - opening
+                    - garage_door
+
+    temperature_section:
+      name: Temperaturen
+      icon: mdi:thermometer
+      input:
+        comfort_temperature:
+          name: Komforttemperatur
+          description: Solltemperatur, wenn Bewegung erkannt wird und die Tür zu ist.
+          default: 21
+          selector:
+            number:
+              min: 5
+              max: 30
+              step: 0.5
+              unit_of_measurement: °C
+              mode: slider
+        setback_temperature:
+          name: Absenktemperatur
+          description: Solltemperatur ohne Bewegung oder wenn die Tür zu lange offen ist.
+          default: 17
+          selector:
+            number:
+              min: 5
+              max: 30
+              step: 0.5
+              unit_of_measurement: °C
+              mode: slider
+        away_temperature:
+          name: Abwesenheitstemperatur
+          description: Solltemperatur, wenn niemand zu Hause ist.
+          default: 16
+          selector:
+            number:
+              min: 5
+              max: 30
+              step: 0.5
+              unit_of_measurement: °C
+              mode: slider
+
+    timing_section:
+      name: Bewegung & Tür
+      icon: mdi:timer-outline
+      input:
+        motion_hold_minutes:
+          name: Nachlaufzeit Bewegung
+          description: >-
+            So lange bleibt die Komforttemperatur aktiv, nachdem der letzte
+            Bewegungsmelder auf „keine Bewegung“ gewechselt hat. Überbrückt
+            kurze Aussetzer der Sensoren.
+          default: 15
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 1
+              unit_of_measurement: min
+              mode: box
+        door_open_minutes:
+          name: Tür-offen-Verzögerung
+          description: >-
+            Ist eine Tür länger als diese Zeit offen, wird auf die
+            Absenktemperatur geregelt. Kürzeres Öffnen wird ignoriert.
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: box
+
+    presence_section:
+      name: Anwesenheit
+      icon: mdi:account-group
+      input:
+        presence_entities:
+          name: Personen / Tracker
+          description: >-
+            Personen, Device-Tracker oder Gruppen. Sind **alle** nicht zu Hause,
+            wird auf die Abwesenheitstemperatur geregelt. Leer lassen, um die
+            Anwesenheit zu ignorieren. (Zustände „home“ bzw. „on“ gelten als zu
+            Hause.)
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain:
+                    - person
+                    - device_tracker
+                    - group
+                    - binary_sensor
+                    - input_boolean
+        away_delay_minutes:
+          name: Abwesenheits-Verzögerung
+          description: >-
+            So lange muss niemand zu Hause sein, bevor abgesenkt wird
+            (verhindert Absenken beim kurzen Müll-Rausbringen o. Ä.).
+          default: 10
+          selector:
+            number:
+              min: 0
+              max: 240
+              step: 1
+              unit_of_measurement: min
+              mode: box
+
+    bed_section:
+      name: Bettsensor / Nachtmodus
+      icon: mdi:bed
+      collapsed: true
+      input:
+        bed_sensors:
+          name: Bettsensoren
+          description: >-
+            Bettbelegungssensoren. Leer lassen, um den Nachtmodus zu
+            deaktivieren. Für den Nachtmodus im ganzen Haus in jeder Raum-
+            Automation dieselben Sensoren auswählen.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain:
+                    - binary_sensor
+                    - input_boolean
+        bed_require_all:
+          name: Alle Betten müssen belegt sein
+          description: >-
+            Aus: Nachtmodus, sobald **ein** Bett belegt ist. An: Nachtmodus erst,
+            wenn **alle** ausgewählten Bettsensoren belegt sind.
+          default: false
+          selector:
+            boolean:
+        bed_on_minutes:
+          name: Einschlaf-Verzögerung
+          description: So lange muss das Bett belegt sein, bevor der Nachtmodus startet.
+          default: 15
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: box
+        bed_off_minutes:
+          name: Aufsteh-Verzögerung
+          description: >-
+            So lange bleibt der Nachtmodus nach dem Aufstehen noch aktiv
+            (z. B. kurzer Gang zur Toilette).
+          default: 5
+          selector:
+            number:
+              min: 0
+              max: 60
+              step: 1
+              unit_of_measurement: min
+              mode: box
+        bed_window_start:
+          name: Zeitfenster Beginn
+          description: >-
+            Nur innerhalb dieses Zeitfensters wird der Nachtmodus aktiv (z. B.
+            nicht beim Mittagsschlaf). Beginn = Ende bedeutet: immer aktiv.
+          default: "21:00:00"
+          selector:
+            time:
+        bed_window_end:
+          name: Zeitfenster Ende
+          description: Ende des Zeitfensters (darf über Mitternacht gehen).
+          default: "09:00:00"
+          selector:
+            time:
+        night_action:
+          name: Aktion im Nachtmodus
+          default: "off"
+          selector:
+            select:
+              options:
+                - label: Heizung ausschalten
+                  value: "off"
+                - label: Auf Nachttemperatur absenken
+                  value: temperature
+        night_temperature:
+          name: Nachttemperatur
+          description: Nur relevant bei „Auf Nachttemperatur absenken“.
+          default: 16
+          selector:
+            number:
+              min: 5
+              max: 30
+              step: 0.5
+              unit_of_measurement: °C
+              mode: slider
+
+    advanced_section:
+      name: Erweitert
+      icon: mdi:cog
+      collapsed: true
+      input:
+        enable_entities:
+          name: Freigabe-Schalter
+          description: >-
+            Optional, z. B. ein input_boolean „Heizperiode“. Ist einer davon
+            aus, macht die Automation nichts.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                - domain:
+                    - input_boolean
+                    - binary_sensor
+                    - switch
+        heat_hvac_mode:
+          name: HVAC-Modus beim Wiedereinschalten
+          description: >-
+            Modus, mit dem ein ausgeschaltetes Thermostat wieder eingeschaltet
+            wird. Thermostate, die bereits laufen, behalten ihren Modus.
+          default: heat
+          selector:
+            select:
+              options:
+                - heat
+                - auto
+                - heat_cool
+
+mode: queued
+max: 20
+max_exceeded: silent
+
+variables:
+  climate_entities: !input climate_entities
+  motion_sensors: !input motion_sensors
+  door_sensors: !input door_sensors
+  presence_entities: !input presence_entities
+  bed_sensors: !input bed_sensors
+  enable_entities: !input enable_entities
+  comfort_temp: !input comfort_temperature
+  setback_temp: !input setback_temperature
+  away_temp: !input away_temperature
+  night_temp: !input night_temperature
+  night_action: !input night_action
+  heat_hvac_mode: !input heat_hvac_mode
+  bed_require_all: !input bed_require_all
+  bed_window_start: !input bed_window_start
+  bed_window_end: !input bed_window_end
+  motion_hold_minutes: !input motion_hold_minutes
+  door_open_minutes: !input door_open_minutes
+  away_delay_minutes: !input away_delay_minutes
+  bed_on_minutes: !input bed_on_minutes
+  bed_off_minutes: !input bed_off_minutes
+  motion_hold_s: "{{ (motion_hold_minutes | float(0)) * 60 }}"
+  door_open_s: "{{ (door_open_minutes | float(0)) * 60 }}"
+  away_delay_s: "{{ (away_delay_minutes | float(0)) * 60 }}"
+  bed_on_s: "{{ (bed_on_minutes | float(0)) * 60 }}"
+  bed_off_s: "{{ (bed_off_minutes | float(0)) * 60 }}"
+
+triggers:
+  # Bewegung
+  - trigger: state
+    entity_id: !input motion_sensors
+    to: "on"
+    id: motion_on
+  - trigger: state
+    entity_id: !input motion_sensors
+    to: "off"
+    for:
+      minutes: !input motion_hold_minutes
+    id: motion_off
+  # Tür
+  - trigger: state
+    entity_id: !input door_sensors
+    to: "on"
+    for:
+      minutes: !input door_open_minutes
+    id: door_open
+  - trigger: state
+    entity_id: !input door_sensors
+    to: "off"
+    id: door_closed
+  # Anwesenheit
+  - trigger: state
+    entity_id: !input presence_entities
+    to:
+      - home
+      - "on"
+    id: presence_home
+  - trigger: state
+    entity_id: !input presence_entities
+    not_to:
+      - home
+      - "on"
+    for:
+      minutes: !input away_delay_minutes
+    id: presence_away
+  # Bett
+  - trigger: state
+    entity_id: !input bed_sensors
+    to: "on"
+    for:
+      minutes: !input bed_on_minutes
+    id: bed_on
+  - trigger: state
+    entity_id: !input bed_sensors
+    to: "off"
+    id: bed_left
+  - trigger: state
+    entity_id: !input bed_sensors
+    to: "off"
+    for:
+      minutes: !input bed_off_minutes
+    id: bed_off
+  - trigger: time
+    at: !input bed_window_start
+    id: bed_window_start
+  - trigger: time
+    at: !input bed_window_end
+    id: bed_window_end
+  # Freigabe & Neustart
+  - trigger: state
+    entity_id: !input enable_entities
+    to: "on"
+    id: enabled
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+  - trigger: event
+    event_type: automation_reloaded
+    id: reloaded
+
+conditions:
+  - alias: Freigabe-Schalter sind an (falls konfiguriert)
+    condition: template
+    value_template: >-
+      {{ expand(enable_entities) | rejectattr('state', 'eq', 'on') | list | count == 0 }}
+
+actions:
+  - alias: Raumzustand ermitteln
+    variables:
+      motion_active: >-
+        {%- set ns = namespace(v=false) -%}
+        {%- for s in expand(motion_sensors) -%}
+          {%- set age = (now() - s.last_changed).total_seconds() -%}
+          {%- if s.state == 'on' or (s.state == 'off' and age < motion_hold_s - 1) -%}
+            {%- set ns.v = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.v }}
+      door_open_long: >-
+        {%- set ns = namespace(v=false) -%}
+        {%- for s in expand(door_sensors) -%}
+          {%- if s.state == 'on' and (now() - s.last_changed).total_seconds() >= door_open_s - 2 -%}
+            {%- set ns.v = true -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.v }}
+      nobody_home: >-
+        {%- set people = expand(presence_entities) -%}
+        {%- set ns = namespace(away=true) -%}
+        {%- for s in people -%}
+          {%- if s.state in ['home', 'on', 'unknown', 'unavailable']
+                or (now() - s.last_changed).total_seconds() < away_delay_s - 2 -%}
+            {%- set ns.away = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ people | count > 0 and ns.away }}
+      in_bed_window: >-
+        {%- set n = now().strftime('%H:%M:%S') -%}
+        {%- if bed_window_start == bed_window_end -%}
+          true
+        {%- elif bed_window_start < bed_window_end -%}
+          {{ bed_window_start <= n < bed_window_end }}
+        {%- else -%}
+          {{ n >= bed_window_start or n < bed_window_end }}
+        {%- endif -%}
+      # Merker für die Aufsteh-Verzögerung: Ist der Raum aktuell im Nachtzustand?
+      climates_in_night: >-
+        {%- set ns = namespace(v=true, n=0) -%}
+        {%- for e in climate_entities if states(e) not in ['unavailable', 'unknown'] -%}
+          {%- set ns.n = ns.n + 1 -%}
+          {%- if night_action == 'off' -%}
+            {%- if states(e) != 'off' -%}{%- set ns.v = false -%}{%- endif -%}
+          {%- elif states(e) == 'off'
+                or ((state_attr(e, 'temperature') | float(-100)) - (night_temp | float)) | abs > 0.05 -%}
+            {%- set ns.v = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.v and ns.n > 0 }}
+      night_active: >-
+        {%- set beds = expand(bed_sensors) -%}
+        {%- set ns = namespace(any=false, all=true) -%}
+        {%- for s in beds -%}
+          {%- set age = (now() - s.last_changed).total_seconds() -%}
+          {%- if (s.state == 'on' and age >= bed_on_s - 2)
+                or (s.state == 'off' and age < bed_off_s - 1 and climates_in_night) -%}
+            {%- set ns.any = true -%}
+          {%- else -%}
+            {%- set ns.all = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ beds | count > 0 and in_bed_window and (ns.all if bed_require_all else ns.any) }}
+      reason: >-
+        {%- if night_active -%}night
+        {%- elif nobody_home -%}away
+        {%- elif door_open_long -%}door_open
+        {%- elif motion_active -%}comfort
+        {%- else -%}setback
+        {%- endif -%}
+      target_off: "{{ reason == 'night' and night_action == 'off' }}"
+      target_temp: >-
+        {%- set temps = {
+          'night': night_temp, 'away': away_temp, 'door_open': setback_temp,
+          'comfort': comfort_temp, 'setback': setback_temp } -%}
+        {{ temps[reason] | float }}
+
+  - alias: Thermostate setzen (nur bei Änderung)
+    repeat:
+      for_each: "{{ climate_entities }}"
+      sequence:
+        - choose:
+            - alias: Ausschalten
+              conditions:
+                - condition: template
+                  value_template: >-
+                    {{ target_off and states(repeat.item) not in ['off', 'unavailable', 'unknown'] }}
+              sequence:
+                - action: climate.turn_off
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  continue_on_error: true
+            - alias: Einschalten mit Solltemperatur
+              conditions:
+                - condition: template
+                  value_template: "{{ not target_off and is_state(repeat.item, 'off') }}"
+              sequence:
+                - action: climate.set_temperature
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  data:
+                    temperature: "{{ target_temp }}"
+                    hvac_mode: "{{ heat_hvac_mode }}"
+                  continue_on_error: true
+            - alias: Solltemperatur anpassen
+              conditions:
+                - condition: template
+                  value_template: >-
+                    {{ not target_off
+                       and states(repeat.item) not in ['off', 'unavailable', 'unknown']
+                       and ((state_attr(repeat.item, 'temperature') | float(-100)) - target_temp) | abs > 0.05 }}
+              sequence:
+                - action: climate.set_temperature
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  data:
+                    temperature: "{{ target_temp }}"
+                  continue_on_error: true
