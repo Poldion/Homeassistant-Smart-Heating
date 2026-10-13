@@ -53,8 +53,12 @@ Weitere Details:
   nicht sofort.
 - **Mehrere Betten:** Optional startet der Nachtmodus erst, wenn *alle* Betten
   belegt sind.
-- **Freigabe-Schalter:** Optional, z. B. ein `input_boolean.heizperiode`. Ist er
-  aus, lässt die Automation die Thermostate in Ruhe.
+- **Freigabe-Schalter (Heizperiode):** Optional, z. B. ein
+  `input_boolean.heizperiode`. Ist er aus (Sommer), werden die Thermostate
+  ausgeschaltet und bleiben aus. Wird er wieder eingeschaltet, regelt die
+  Automation sofort normal weiter. Mit der Option „Thermostate ausschalten, wenn
+  Freigabe aus“ = aus bleiben die Thermostate stattdessen unverändert. Ohne
+  gewählten Schalter hat beides keine Wirkung.
 - Thermostate werden nur angesprochen, wenn sich der Sollwert ändert. Ein
   ausgeschaltetes Thermostat wird mit dem gewählten HVAC-Modus (Standard
   `heat`) wieder eingeschaltet.

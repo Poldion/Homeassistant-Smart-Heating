@@ -126,8 +126,8 @@ async def test_night_temperature_and_disabled(env):
     await setup(night_action="temperature", night_temperature=15.5)
     await st("binary_sensor.motion", "on")
     await st("binary_sensor.bed", "on"); await tick(16); assert cur() == 15.5
-    await st("input_boolean.season", "off")
-    await st("binary_sensor.bed", "off"); await tick(10); assert cur() == 15.5
+    await st("input_boolean.season", "off"); assert cur() == "off"
+    await st("binary_sensor.bed", "off"); await tick(10); assert cur() == "off"
     await st("input_boolean.season", "on"); assert cur() == 21
 
 
@@ -159,3 +159,21 @@ async def test_presence_zone_gps(env):
     assert cur() == 16                                                 # pet motion keeps away
     await gps("not_home", 2); assert cur() == 21                       # back in Umgebung
     await gps("home", 0); assert cur() == 21
+
+
+async def test_disabled_turns_off(env):
+    hass, setup, tick, st, cur, calls, _ = env
+    await setup()
+    await st("binary_sensor.motion", "on"); assert cur() == 21
+    await st("input_boolean.season", "off"); assert cur() == "off"
+    n = len(calls)
+    await st("binary_sensor.motion", "off"); await st("binary_sensor.motion", "on")
+    assert cur() == "off" and len(calls) == n                 # stays off, no extra calls
+    await st("input_boolean.season", "on"); assert cur() == 21
+
+
+async def test_disabled_keep_option(env):
+    hass, setup, tick, st, cur, calls, _ = env
+    await setup(disabled_turn_off=False)
+    await st("binary_sensor.motion", "on"); assert cur() == 21
+    await st("input_boolean.season", "off"); assert cur() == 21  # left untouched

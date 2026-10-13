@@ -290,7 +290,7 @@ blueprint:
           name: Freigabe-Schalter
           description: >-
             Optional, z. B. ein input_boolean „Heizperiode“. Ist einer davon
-            aus, macht die Automation nichts.
+            aus, regelt die Automation nicht (siehe nächste Option).
           default: []
           selector:
             entity:
@@ -300,6 +300,16 @@ blueprint:
                     - input_boolean
                     - binary_sensor
                     - switch
+        disabled_turn_off:
+          name: Thermostate ausschalten, wenn Freigabe aus
+          description: >-
+            Nur wirksam, wenn oben ein Freigabe-Schalter gewählt ist. An: Ist die
+            Freigabe aus (z. B. im Sommer), werden die Thermostate ausgeschaltet
+            und bleiben aus. Aus: Die Thermostate bleiben einfach so, wie sie
+            gerade sind.
+          default: true
+          selector:
+            boolean:
         heat_hvac_mode:
           name: HVAC-Modus beim Wiedereinschalten
           description: >-
@@ -327,6 +337,7 @@ variables:
   door_sensors: !input door_sensors
   bed_sensors: !input bed_sensors
   enable_entities: !input enable_entities
+  disabled_turn_off: !input disabled_turn_off
   comfort_temp: !input comfort_temperature
   setback_temp: !input setback_temperature
   away_temp: !input away_temperature
@@ -443,8 +454,10 @@ triggers:
   # Freigabe & Neustart
   - trigger: state
     entity_id: !input enable_entities
-    to: "on"
-    id: enabled
+    to:
+      - "on"
+      - "off"
+    id: enable_changed
   - trigger: homeassistant
     event: start
     id: ha_start
@@ -453,12 +466,31 @@ triggers:
     id: reloaded
 
 conditions:
-  - alias: Freigabe-Schalter sind an (falls konfiguriert)
+  - alias: Freigabe an, oder Thermostate sollen bei Freigabe aus abgeschaltet werden
     condition: template
     value_template: >-
-      {{ expand(enable_entities) | rejectattr('state', 'eq', 'on') | list | count == 0 }}
+      {{ disabled_turn_off
+         or expand(enable_entities) | rejectattr('state', 'eq', 'on') | list | count == 0 }}
 
 actions:
+  - alias: Freigabe aus → Thermostate ausschalten und beenden
+    if:
+      - condition: template
+        value_template: >-
+          {{ expand(enable_entities) | rejectattr('state', 'eq', 'on') | list | count > 0 }}
+    then:
+      - repeat:
+          for_each: "{{ climate_entities }}"
+          sequence:
+            - if:
+                - condition: template
+                  value_template: "{{ states(repeat.item) not in ['off', 'unavailable', 'unknown'] }}"
+              then:
+                - action: climate.turn_off
+                  target:
+                    entity_id: "{{ repeat.item }}"
+                  continue_on_error: true
+      - stop: Freigabe ist aus
   - alias: Raumzustand ermitteln
     variables:
       motion_active: >-
