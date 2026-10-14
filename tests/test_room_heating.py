@@ -177,3 +177,29 @@ async def test_disabled_keep_option(env):
     await setup(disabled_turn_off=False)
     await st("binary_sensor.motion", "on"); assert cur() == 21
     await st("input_boolean.season", "off"); assert cur() == 21  # left untouched
+
+
+async def test_door_only_room(env):
+    hass, setup, tick, st, cur, calls, _ = env
+    await setup(motion_sensors=[], door_closed_minutes=3)
+    assert cur() == 17
+    await tick(0.1)
+    hass.states.async_set("binary_sensor.door", "on"); await hass.async_block_till_done()
+    await st("binary_sensor.door", "off"); assert cur() == 17          # closed < 3 min
+    await tick(2); assert cur() == 17
+    await tick(1.5); assert cur() == 21                                # closed 3 min -> heat
+    await st("binary_sensor.door", "on"); await tick(2)
+    await st("binary_sensor.door", "off"); assert cur() == 21          # short opening ignored
+    await st("binary_sensor.door", "on"); await tick(10.5); assert cur() == 17  # open 10 min
+    await st("binary_sensor.door", "off"); await tick(1); assert cur() == 17
+    await tick(2.5); assert cur() == 21
+
+
+async def test_door_closed_delay_with_motion(env):
+    hass, setup, tick, st, cur, calls, _ = env
+    await setup(door_closed_minutes=2)
+    await tick(2.5)
+    await st("binary_sensor.motion", "on"); assert cur() == 21         # door closed > 2 min
+    await st("binary_sensor.door", "on"); await tick(10.5); assert cur() == 17
+    await st("binary_sensor.door", "off"); assert cur() == 17          # motion, but closed < 2 min
+    await tick(2.5); assert cur() == 21

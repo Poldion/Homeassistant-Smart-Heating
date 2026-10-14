@@ -28,7 +28,7 @@ Die erste zutreffende Regel gewinnt:
 | 1 | Bett im Zeitfenster länger als *Einschlaf-Verzögerung* belegt | Heizung **aus** oder **Nachttemperatur** |
 | 2 | Keine Person länger als *Abwesenheits-Verzögerung* in einer der *Zuhause-Zonen* | **Abwesenheitstemperatur** |
 | 3 | Eine Tür länger als *Tür-offen-Verzögerung* offen | **Absenktemperatur** |
-| 4 | Bewegung erkannt oder innerhalb der *Nachlaufzeit* | **Komforttemperatur** |
+| 4 | Bewegung erkannt oder innerhalb der *Nachlaufzeit* (ohne Bewegungsmelder: immer) und Tür zu | **Komforttemperatur** |
 | 5 | sonst | **Absenktemperatur** |
 
 Weitere Details:
@@ -38,6 +38,13 @@ Weitere Details:
 - **Tür:** Kurzes Öffnen wird ignoriert. Erst nach der eingestellten Zeit
   wird abgesenkt. Ist die Tür wieder zu und es gibt Bewegung, geht es zurück
   auf Komfort.
+- **Tür-zu-Verzögerung:** So lange müssen alle Türen zu sein, bevor ein Raum,
+  der gerade nicht heizt, auf Komfort geht (Standard 0 = sofort). Heizt der Raum
+  bereits, unterbricht kurzes Öffnen nichts.
+- **Raum ohne Bewegungsmelder:** Der Raum reagiert nur auf die Tür. Ist sie zu
+  (und die Tür-zu-Verzögerung abgelaufen), gibt es Komforttemperatur, bei zu
+  lange offener Tür die Absenktemperatur. Abwesenheit, Nachtmodus und
+  Heizperiode gelten weiterhin.
 - **Zuhause-Zonen:** Du wählst, welche Zonen als „zu Hause“ zählen (Standard:
   `zone.home`). Legst du z. B. eine Zone „Umgebung“ mit 2–3 km Radius an und
   wählst sie aus, senkt kurzes Einkaufen nichts ab. Geprüft wird per GPS-Abstand

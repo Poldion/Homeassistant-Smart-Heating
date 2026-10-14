@@ -18,7 +18,8 @@ blueprint:
        Absenktemperatur
 
     4. **Bewegung** – Bewegung erkannt (inkl. Nachlaufzeit) und Tür zu →
-       Komforttemperatur
+       Komforttemperatur. Ohne Bewegungsmelder reagiert der Raum nur auf die
+       Tür: Tür zu → Komforttemperatur.
 
     5. **Sonst** → Absenktemperatur
 
@@ -47,6 +48,8 @@ blueprint:
           description: >-
             Bewegungs-/Präsenzmelder dieses Raums. Ist mindestens einer aktiv
             (oder innerhalb der Nachlaufzeit), gilt der Raum als belegt.
+            Leer lassen, damit der Raum nur auf die Tür reagiert (Tür zu →
+            Komforttemperatur).
           default: []
           selector:
             entity:
@@ -136,6 +139,20 @@ blueprint:
             Ist eine Tür länger als diese Zeit offen, wird auf die
             Absenktemperatur geregelt. Kürzeres Öffnen wird ignoriert.
           default: 10
+          selector:
+            number:
+              min: 0
+              max: 120
+              step: 1
+              unit_of_measurement: min
+              mode: box
+        door_closed_minutes:
+          name: Tür-zu-Verzögerung
+          description: >-
+            So lange müssen alle Türen geschlossen sein, bevor der Raum (wieder)
+            auf Komforttemperatur geht. Gilt nur, wenn der Raum gerade nicht
+            heizt; kurzes Öffnen während des Heizens unterbricht nichts.
+          default: 0
           selector:
             number:
               min: 0
@@ -349,10 +366,12 @@ variables:
   bed_window_end: !input bed_window_end
   motion_hold_minutes: !input motion_hold_minutes
   door_open_minutes: !input door_open_minutes
+  door_closed_minutes: !input door_closed_minutes
   bed_on_minutes: !input bed_on_minutes
   bed_off_minutes: !input bed_off_minutes
   motion_hold_s: "{{ (motion_hold_minutes | float(0)) * 60 }}"
   door_open_s: "{{ (door_open_minutes | float(0)) * 60 }}"
+  door_closed_s: "{{ (door_closed_minutes | float(0)) * 60 }}"
   bed_on_s: "{{ (bed_on_minutes | float(0)) * 60 }}"
   bed_off_s: "{{ (bed_off_minutes | float(0)) * 60 }}"
 
@@ -379,6 +398,12 @@ triggers:
     entity_id: !input door_sensors
     to: "off"
     id: door_closed
+  - trigger: state
+    entity_id: !input door_sensors
+    to: "off"
+    for:
+      minutes: !input door_closed_minutes
+    id: door_closed_long
   # Anwesenheit (Template, damit auch GPS-Positionen ohne Zustandswechsel zählen)
   - trigger: template
     value_template: >-
@@ -502,6 +527,27 @@ actions:
           {%- endif -%}
         {%- endfor -%}
         {{ ns.v }}
+      # Ohne Bewegungsmelder gilt der Raum als belegt (reagiert nur auf die Tür).
+      occupied: "{{ motion_active or motion_sensors | count == 0 }}"
+      doors_closed_long: >-
+        {%- set ns = namespace(v=true) -%}
+        {%- for s in expand(door_sensors) -%}
+          {%- if s.state == 'on' or (now() - s.last_changed).total_seconds() < door_closed_s - 2 -%}
+            {%- set ns.v = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.v }}
+      # Merker: Heizt der Raum gerade schon (alle Thermostate auf Komfort)?
+      comfort_applied: >-
+        {%- set ns = namespace(v=true, n=0) -%}
+        {%- for e in climate_entities if states(e) not in ['unavailable', 'unknown'] -%}
+          {%- set ns.n = ns.n + 1 -%}
+          {%- if states(e) == 'off'
+                or ((state_attr(e, 'temperature') | float(-100)) - (comfort_temp | float)) | abs > 0.05 -%}
+            {%- set ns.v = false -%}
+          {%- endif -%}
+        {%- endfor -%}
+        {{ ns.v and ns.n > 0 }}
       door_open_long: >-
         {%- set ns = namespace(v=false) -%}
         {%- for s in expand(door_sensors) -%}
@@ -585,7 +631,7 @@ actions:
         {%- if night_active -%}night
         {%- elif nobody_home -%}away
         {%- elif door_open_long -%}door_open
-        {%- elif motion_active -%}comfort
+        {%- elif occupied and (comfort_applied or doors_closed_long) -%}comfort
         {%- else -%}setback
         {%- endif -%}
       target_off: "{{ reason == 'night' and night_action == 'off' }}"
